@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Scanner</title>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 1em; }
+        video { width: 100%; border: 1px solid #ccc; }
+        input, select, textarea { width: 100%; margin: 4px 0; padding: 6px; box-sizing: border-box; }
+        label { font-weight: bold; margin-top: 8px; display: block; }
+        button { padding: 10px; margin-top: 10px; width: 100%; font-size: 1em; }
+    </style>
+</head>
+<body>
+    <h1>Book Scanner</h1>
+
+    <video id="video"></video>
+    <p id="status">Point camera at a barcode...</p>
+
+    <form id="bookForm" style="display:none;">
+        <label>ISBN</label>
+        <input type="text" id="isbn" readonly>
+
+        <label>Title</label>
+        <input type="text" id="title">
+
+        <label>Author</label>
+        <input type="text" id="author">
+
+        <label>Year</label>
+        <input type="text" id="year">
+
+        <label>Publisher</label>
+        <input type="text" id="publisher">
+
+        <label>Status</label>
+        <select id="status_field">
+            <option value="unread">Unread</option>
+            <option value="reading">Reading</option>
+            <option value="finished">Finished</option>
+        </select>
+
+        <label>Ownership</label>
+        <select id="ownership">
+            <option value="owned">Owned</option>
+            <option value="borrowed">Borrowed</option>
+            <option value="want">Want</option>
+        </select>
+
+        <label>Tags</label>
+        <input type="text" id="tags" placeholder="comma separated">
+
+        <label>Shelf</label>
+        <input type="text" id="shelf">
+
+        <label>Notes</label>
+        <textarea id="notes"></textarea>
+
+        <button type="submit">Save</button>
+        <button type="button" id="scanAgain">Scan Again</button>
+    </form>
+
+    <script>
+        const codeReader = new ZXing.BrowserMultiFormatReader();
+        const videoElem = document.getElementById('video');
+        const statusElem = document.getElementById('status');
+        const form = document.getElementById('bookForm');
+
+        function startScanning() {
+            form.style.display = 'none';
+            videoElem.style.display = 'block';
+            statusElem.textContent = 'Point camera at a barcode...';
+
+            codeReader.decodeFromVideoDevice(undefined, 'video', (result, err) => {
+                if (result) {
+                    codeReader.reset();
+                    videoElem.style.display = 'none';
+                    handleScan(result.getText());
+                }
+            });
+        }
+
+        async function handleScan(isbn) {
+            statusElem.textContent = `Scanned: ${isbn}. Looking up...`;
+
+            const resp = await fetch('/lookup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isbn })
+            });
+            const data = await resp.json();
+
+            document.getElementById('isbn').value = isbn;
+            document.getElementById('title').value = data.title || '';
+            document.getElementById('author').value = data.author || '';
+            document.getElementById('year').value = data.year || '';
+            document.getElementById('publisher').value = data.publisher || '';
+
+            statusElem.textContent = data.title ? 'Found! Edit and save.' : 'Not found — fill in manually.';
+            form.style.display = 'block';
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const payload = {
+                isbn: document.getElementById('isbn').value,
+                title: document.getElementById('title').value,
+                author: document.getElementById('author').value,
+                year: document.getElementById('year').value,
+                publisher: document.getElementById('publisher').value,
+                status: document.getElementById('status_field').value,
+                ownership: document.getElementById('ownership').value,
+                tags: document.getElementById('tags').value,
+                shelf: document.getElementById('shelf').value,
+                notes: document.getElementById('notes').value,
+            };
+
+            await fetch('/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            statusElem.textContent = 'Saved!';
+            startScanning();
+        });
+
+        document.getElementById('scanAgain').addEventListener('click', startScanning);
+
+        startScanning();
+    </script>
+</body>
+</html>
