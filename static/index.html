@@ -62,6 +62,9 @@
         <button type="button" id="scanAgain">Scan Again</button>
     </form>
 
+    <button id="toggleList" type="button">Show Scanned Books</button>
+    <div id="bookList" style="display:none;"></div>
+
     <script>
         const codeReader = new ZXing.BrowserMultiFormatReader();
         const videoElem = document.getElementById('video');
@@ -127,9 +130,26 @@
             startScanning();
         });
 
-        document.getElementById('scanAgain').addEventListener('click', startScanning);
+      document.getElementById('scanAgain').addEventListener('click', startScanning);
 
-        startScanning();
+      document.getElementById('toggleList').addEventListener('click', async () => {
+	  const listDiv = document.getElementById('bookList');
+	  if (listDiv.style.display === 'none') {
+              const resp = await fetch('/books');
+              const books = await resp.json();
+              listDiv.innerHTML = books.map(b =>
+		  `<div style="border-bottom:1px solid #ccc; padding:8px 0;">
+                <strong>${b.title}</strong> by ${b.author} (${b.year})<br>
+                <small>${b.shelf} · ${b.status} · ${b.tags}</small>
+            </div>`
+              ).join('');
+              listDiv.style.display = 'block';
+	  } else {
+              listDiv.style.display = 'none';
+	  }
+      });
+
+      startScanning();
     </script>
 </body>
 </html>
