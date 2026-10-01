@@ -67,89 +67,155 @@
 
     <script>
         const codeReader = new ZXing.BrowserMultiFormatReader();
-        const videoElem = document.getElementById('video');
-        const statusElem = document.getElementById('status');
-        const form = document.getElementById('bookForm');
+	const videoElem = document.getElementById('video');
+	const statusElem = document.getElementById('status');
+	const form = document.getElementById('bookForm');
 
-        function startScanning() {
-            form.style.display = 'none';
-            videoElem.style.display = 'block';
-            statusElem.textContent = 'Point camera at a barcode...';
+	function startScanning() {
+	    form.style.display = 'none';
+	    videoElem.style.display = 'block';
+	    statusElem.textContent = 'Point camera at a barcode...';
+	    codeReader.decodeFromVideoDevice(undefined, 'video', (result, err) => {
+		if (result) {
+		    codeReader.reset();
+		    videoElem.style.display = 'none';
+		    handleScan(result.getText());
+		}
+	    });
+	}
 
-            codeReader.decodeFromVideoDevice(undefined, 'video', (result, err) => {
-                if (result) {
-                    codeReader.reset();
-                    videoElem.style.display = 'none';
-                    handleScan(result.getText());
-                }
-            });
-        }
+	async function handleScan(isbn) {
+	    statusElem.textContent = `Scanned: ${isbn}. Looking up...`;
+	    const resp = await fetch('/lookup', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ isbn })
+	    });
+	    const data = await resp.json();
+	    document.getElementById('isbn').value = isbn;
+	    document.getElementById('title').value = data.title || '';
+	    document.getElementById('author').value = data.author || '';
+	    document.getElementById('year').value = data.year || '';
+	    document.getElementById('publisher').value = data.publisher || '';
+	    statusElem.textContent = data.title ? 'Found! Edit and save.' : 'Not found — fill in manually.';
+	    form.style.display = 'block';
+	}
 
-        async function handleScan(isbn) {
-            statusElem.textContent = `Scanned: ${isbn}. Looking up...`;
+	async function loadBooks() {
+	    const resp = await fetch('/books');
+	    const books = await resp.json();
+	    const listDiv = document.getElementById('bookList');
+	    if (books.length === 0) {
+		listDiv.innerHTML = '<p>No books scanned yet.</p>';
+		return;
+	    }
+	    listDiv.innerHTML = books.map(b => `
+		<div id="book-${b.id}" style="border-bottom:1px solid #ccc; padding:8px 0;">
+		    <div id="view-${b.id}">
+			<strong>${b.title || '(no title)'}</strong> by ${b.author || '(no author)'} (${b.year || ''})<br>
+			<small>${b.shelf} · ${b.status} · ${b.ownership} · ${b.tags}</small><br>
+			<button onclick="startEdit(${b.id})">Edit</button>
+			<button onclick="deleteBook(${b.id})">Delete</button>
+		    </div>
+		    <div id="edit-${b.id}" style="display:none;">
+			<input id="e-isbn-${b.id}" value="${b.isbn}" placeholder="ISBN"><br>
+			<input id="e-title-${b.id}" value="${b.title}" placeholder="Title"><br>
+			<input id="e-author-${b.id}" value="${b.author}" placeholder="Author"><br>
+			<input id="e-year-${b.id}" value="${b.year}" placeholder="Year"><br>
+			<input id="e-publisher-${b.id}" value="${b.publisher}" placeholder="Publisher"><br>
+			<select id="e-status-${b.id}">
+			    <option value="unread" ${b.status==='unread'?'selected':''}>Unread</option>
+			    <option value="reading" ${b.status==='reading'?'selected':''}>Reading</option>
+			    <option value="finished" ${b.status==='finished'?'selected':''}>Finished</option>
+			</select>
+			<select id="e-ownership-${b.id}">
+			    <option value="owned" ${b.ownership==='owned'?'selected':''}>Owned</option>
+			    <option value="borrowed" ${b.ownership==='borrowed'?'selected':''}>Borrowed</option>
+			    <option value="want" ${b.ownership==='want'?'selected':''}>Want</option>
+			</select>
+			<input id="e-tags-${b.id}" value="${b.tags}" placeholder="Tags"><br>
+			<input id="e-shelf-${b.id}" value="${b.shelf}" placeholder="Shelf"><br>
+			<textarea id="e-notes-${b.id}">${b.notes}</textarea><br>
+			<button onclick="saveEdit(${b.id})">Save</button>
+			<button onclick="cancelEdit(${b.id})">Cancel</button>
+		    </div>
+		</div>
+	    `).join('');
+	}
 
-            const resp = await fetch('/lookup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ isbn })
-            });
-            const data = await resp.json();
+	function startEdit(id) {
+	    document.getElementById(`view-${id}`).style.display = 'none';
+	    document.getElementById(`edit-${id}`).style.display = 'block';
+	}
 
-            document.getElementById('isbn').value = isbn;
-            document.getElementById('title').value = data.title || '';
-            document.getElementById('author').value = data.author || '';
-            document.getElementById('year').value = data.year || '';
-            document.getElementById('publisher').value = data.publisher || '';
+	function cancelEdit(id) {
+	    document.getElementById(`view-${id}`).style.display = 'block';
+	    document.getElementById(`edit-${id}`).style.display = 'none';
+	}
 
-            statusElem.textContent = data.title ? 'Found! Edit and save.' : 'Not found — fill in manually.';
-            form.style.display = 'block';
-        }
+	async function saveEdit(id) {
+	    const payload = {
+		isbn: document.getElementById(`e-isbn-${id}`).value,
+		title: document.getElementById(`e-title-${id}`).value,
+		author: document.getElementById(`e-author-${id}`).value,
+		year: document.getElementById(`e-year-${id}`).value,
+		publisher: document.getElementById(`e-publisher-${id}`).value,
+		status: document.getElementById(`e-status-${id}`).value,
+		ownership: document.getElementById(`e-ownership-${id}`).value,
+		tags: document.getElementById(`e-tags-${id}`).value,
+		shelf: document.getElementById(`e-shelf-${id}`).value,
+		notes: document.getElementById(`e-notes-${id}`).value,
+	    };
+	    await fetch(`/books/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	    });
+	    await loadBooks();
+	}
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const payload = {
-                isbn: document.getElementById('isbn').value,
-                title: document.getElementById('title').value,
-                author: document.getElementById('author').value,
-                year: document.getElementById('year').value,
-                publisher: document.getElementById('publisher').value,
-                status: document.getElementById('status_field').value,
-                ownership: document.getElementById('ownership').value,
-                tags: document.getElementById('tags').value,
-                shelf: document.getElementById('shelf').value,
-                notes: document.getElementById('notes').value,
-            };
+	async function deleteBook(id) {
+	    if (!confirm('Delete this book?')) return;
+	    await fetch(`/books/${id}`, { method: 'DELETE' });
+	    document.getElementById(`book-${id}`).remove();
+	}
 
-            await fetch('/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+	form.addEventListener('submit', async (e) => {
+	    e.preventDefault();
+	    const payload = {
+		isbn: document.getElementById('isbn').value,
+		title: document.getElementById('title').value,
+		author: document.getElementById('author').value,
+		year: document.getElementById('year').value,
+		publisher: document.getElementById('publisher').value,
+		status: document.getElementById('status_field').value,
+		ownership: document.getElementById('ownership').value,
+		tags: document.getElementById('tags').value,
+		shelf: document.getElementById('shelf').value,
+		notes: document.getElementById('notes').value,
+	    };
+	    await fetch('/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	    });
+	    statusElem.textContent = 'Saved!';
+	    startScanning();
+	});
 
-            statusElem.textContent = 'Saved!';
-            startScanning();
-        });
+	document.getElementById('scanAgain').addEventListener('click', startScanning);
 
-      document.getElementById('scanAgain').addEventListener('click', startScanning);
+	document.getElementById('toggleList').addEventListener('click', async () => {
+	    const listDiv = document.getElementById('bookList');
+	    if (listDiv.style.display === 'none') {
+		await loadBooks();
+		listDiv.style.display = 'block';
+	    } else {
+		listDiv.style.display = 'none';
+	    }
+	});
 
-      document.getElementById('toggleList').addEventListener('click', async () => {
-	  const listDiv = document.getElementById('bookList');
-	  if (listDiv.style.display === 'none') {
-              const resp = await fetch('/books');
-              const books = await resp.json();
-              listDiv.innerHTML = books.map(b =>
-		  `<div style="border-bottom:1px solid #ccc; padding:8px 0;">
-                <strong>${b.title}</strong> by ${b.author} (${b.year})<br>
-                <small>${b.shelf} · ${b.status} · ${b.tags}</small>
-            </div>`
-              ).join('');
-              listDiv.style.display = 'block';
-	  } else {
-              listDiv.style.display = 'none';
-	  }
-      });
-
-      startScanning();
+	startScanning();
     </script>
 </body>
 </html>

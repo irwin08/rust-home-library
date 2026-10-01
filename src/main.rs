@@ -2,10 +2,10 @@ mod db;
 mod openlibrary;
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     response::{Json, IntoResponse, Response},
     http::header,
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
 };
 use rusqlite::Connection;
@@ -29,6 +29,7 @@ struct LookupResponse {
     author: Option<String>,
     year: Option<String>,
     publisher: Option<String>,
+    duplicate: bool,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +72,7 @@ async fn main() {
         .route("/save", post(save_handler))
         .route("/export", get(export_handler))
         .route("/books", get(list_books_handler))
+        .route("/books/{id}", delete(delete_handler).put(update_handler))
         .fallback_service(ServeDir::new("static"))
         .with_state(shared_db);
 
@@ -95,8 +97,21 @@ async fn main() {
     }
 }
 
-async fn lookup_handler(Json(req): Json<IsbnRequest>) -> Json<LookupResponse> {
+async fn lookup_handler(
+    State(db): State<SharedDb>,
+    Json(req): Json<IsbnRequest>,
+) -> Json<LookupResponse> {
     let book = openlibrary::lookup_isbn(&req.isbn).await;
+
+    let duplicate = {
+	let conn = db.lock().unwrap();
+	let count: i64 = conn.query_row(
+	    "SELECT count(*) FROM books WHERE isbn = ?1",
+	    [&req.isbn],
+	    |row| row.get(0),
+	).unwrap_or(0);
+	count > 0
+    };
 
     match book {
 	Some(b) => Json(LookupResponse {
@@ -114,12 +129,14 @@ async fn lookup_handler(Json(req): Json<IsbnRequest>) -> Json<LookupResponse> {
 		    .collect::<Vec<_>>()
 		    .join(", ")
 	    }),
+	    duplicate,
 	}),
 	None => Json(LookupResponse {
 	    title: None,
 	    author: None,
 	    year: None,
 	    publisher: None,
+	    duplicate,
 	}),
     }
 }
@@ -207,4 +224,32 @@ async fn list_books_handler(State(db): State<SharedDb>) -> Json<Vec<BookRecord>>
 	.collect();
 
     Json(books)
+}
+
+async fn delete_handler(
+    State(db): State<SharedDb>,
+    Path(id): Path<i64>,
+) -> &'static str {
+    let conn = db.lock().unwrap();
+    conn.execute("DELETE FROM books WHERE id = ?1", [id])
+        .expect("Failed to delete book");
+    "OK"
+}
+
+async fn update_handler(
+    State(db): State<SharedDb>,
+    Path(id): Path<i64>,
+    Json(req): Json<SaveRequest>,
+) -> &'static str {
+    let conn = db.lock().unwrap();
+    conn.execute(
+	"UPDATE books SET isbn=?1, title=?2, author=?3, year=?4, publisher=?5,
+         status=?6, ownership=?7, tags=?8, shelf=?9, notes=?10 WHERE id=?11",
+	(
+	    &req.isbn, &req.title, &req.author, &req.year, &req.publisher,
+	    &req.status, &req.ownership, &req.tags, &req.shelf, &req.notes,
+	    id,
+	),
+    ).expect("Failed to update book");
+    "OK"
 }
